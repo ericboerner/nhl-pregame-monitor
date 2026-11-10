@@ -21,7 +21,7 @@ jobs:
       - name: Run NHL monitor
         run: python3 monitor.py
 
-      - name: Identify NHL tournament
+      - name: Test Pinnacle NHL odds
         if: github.event_name == 'workflow_dispatch'
         env:
           ODDSPAPI_API_KEY: ${{ secrets.ODDSPAPI_API_KEY }}
@@ -31,33 +31,61 @@ jobs:
           import os
           import urllib.parse
           import urllib.request
+          from datetime import datetime, timedelta, timezone
 
-          params = urllib.parse.urlencode({
-              "apiKey": os.environ["ODDSPAPI_API_KEY"],
-              "sportId": 15,
-              "language": "en"
+          key = os.environ["ODDSPAPI_API_KEY"]
+          now = datetime.now(timezone.utc)
+          end = now + timedelta(hours=12)
+
+          def request(path, params):
+              params["apiKey"] = key
+              query = urllib.parse.urlencode(params)
+              url = "https://api.oddspapi.io" + path + "?" + query
+              with urllib.request.urlopen(url, timeout=25) as response:
+                  return json.load(response)
+
+          fixtures = request("/v4/fixtures", {
+              "tournamentId": 234,
+              "from": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "to": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "statusId": 0,
+              "hasOdds": "true",
+              "bookmakers": "pinnacle"
           })
 
-          url = "https://api.oddspapi.io/v4/tournaments?" + params
+          print("NHL fixtures found:", len(fixtures))
 
-          with urllib.request.urlopen(url, timeout=20) as response:
-              tournaments = json.load(response)
+          if not fixtures:
+              print("No qualifying NHL fixtures in next 12 hours.")
+          else:
+              fixture = fixtures[0]
+              fixture_id = fixture["fixtureId"]
 
-          target_ids = {234, 844, 1159, 14361}
+              print("Testing fixture:", fixture_id)
+              print("Start:", fixture.get("startTime"))
 
-          print("Matching tournament information:")
+              odds = request("/v4/odds", {
+                  "fixtureId": fixture_id,
+                  "bookmakers": "pinnacle",
+                  "oddsFormat": "decimal",
+                  "language": "en",
+                  "verbosity": 2
+              })
 
-          for tournament in tournaments:
-              tournament_id = tournament.get("tournamentId")
-              name = tournament.get("tournamentName", "")
-              category = tournament.get("categoryName", "")
+              print("Odds response received")
+              print("Top-level fields:", list(odds.keys()))
 
-              if tournament_id in target_ids or name.strip().upper() == "NHL":
-                  print(
-                      "ID:", tournament_id,
-                      "| League:", name,
-                      "| Category:", category
-                  )
+              for key_name, value in odds.items():
+                  if isinstance(value, dict):
+                      print(
+                          "Section:", key_name,
+                          "| Keys:", list(value.keys())[:20]
+                      )
+                  elif isinstance(value, list):
+                      print(
+                          "Section:", key_name,
+                          "| Items:", len(value)
+                      )
 
-          print("Tournament lookup complete")
+              print("Market structure inspection complete")
           PY
