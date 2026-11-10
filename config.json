@@ -1,0 +1,11 @@
+{
+  "sport": "NHL",
+  "pregame_only": true,
+  "lookahead_hours": 12,
+  "poll_minutes": 10,
+  "min_edge_percentage_points": 3,
+  "player_props": ["goals", "points"],
+  "game_markets": ["moneyline", "puck_line", "total", "team_total", "period"],
+  "real_odds_enabled": false,
+  "telegram_enabled": false
+}
