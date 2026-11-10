@@ -13,6 +13,7 @@ jobs:
   monitor:
     runs-on: ubuntu-latest
     timeout-minutes: 3
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -32,10 +33,51 @@ jobs:
           import urllib.request
 
           key = os.environ["ODDSPAPI_API_KEY"]
-          url = "https://api.oddspapi.io/v4/account?" + urllib.parse.urlencode({"apiKey": key})
+
+          params = urllib.parse.urlencode({
+              "apiKey": key
+          })
+
+          url = "https://api.oddspapi.io/v4/account?" + params
+
           with urllib.request.urlopen(url, timeout=20) as response:
               data = json.load(response)
 
           print("OddsPapi account connection successful")
-          print("Response fields:", ", ".join(data.keys()) if isinstance(data, dict) else "Non-object response")
+          print("Account response received")
+          PY
+
+      - name: Find Ice Hockey sport ID
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          ODDSPAPI_API_KEY: ${{ secrets.ODDSPAPI_API_KEY }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+
+          params = urllib.parse.urlencode({
+              "apiKey": os.environ["ODDSPAPI_API_KEY"],
+              "language": "en"
+          })
+
+          url = "https://api.oddspapi.io/v4/sports?" + params
+
+          with urllib.request.urlopen(url, timeout=20) as response:
+              sports = json.load(response)
+
+          found = False
+
+          for sport in sports:
+              name = sport.get("sportName", "")
+              if "hockey" in name.lower():
+                  print("Sport:", name)
+                  print("Sport ID:", sport.get("sportId"))
+                  print("Slug:", sport.get("slug"))
+                  found = True
+
+          if not found:
+              print("No hockey sport found in API response")
           PY
