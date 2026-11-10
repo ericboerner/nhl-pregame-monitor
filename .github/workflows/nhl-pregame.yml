@@ -17,5 +17,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Run NHL monitor
+            - name: Run NHL monitor
         run: python3 monitor.py
+
+      - name: Check OddsPapi account
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          ODDSPAPI_API_KEY: ${{ secrets.ODDSPAPI_API_KEY }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+
+          key = os.environ["ODDSPAPI_API_KEY"]
+          url = "https://api.oddspapi.io/v4/account?" + urllib.parse.urlencode({"apiKey": key})
+          with urllib.request.urlopen(url, timeout=20) as response:
+              data = json.load(response)
+
+          print("OddsPapi account connection successful")
+          print("Response fields:", ", ".join(data.keys()) if isinstance(data, dict) else "Non-object response")
+          PY
