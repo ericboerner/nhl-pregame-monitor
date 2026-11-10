@@ -1,103 +1,145 @@
 
-name: NHL Pregame Monitor
+"""NHL pregame Pinnacle odds parser — safe mode."""
 
-on:
-  schedule:
-    - cron: '3,13,23,33,43,53 * * * *'
-  workflow_dispatch:
+import json
+from datetime import datetime, timezone
+from pathlib import Path
 
-permissions:
-  contents: read
+CONFIG_PATH = Path(__file__).with_name("config.json")
 
-jobs:
-  monitor:
-    runs-on: ubuntu-latest
-    timeout-minutes: 3
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+NHL_SPORT_ID = 15
+NHL_TOURNAMENT_ID = 234
+BOOKMAKER = "pinnacle"
 
-      - name: Run NHL monitor
-        run: python3 monitor.py
 
-      - name: Inspect NHL market details
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          ODDSPAPI_API_KEY: ${{ secrets.ODDSPAPI_API_KEY }}
-        run: |
-          python3 - <<'PY'
-          import json
-          import os
-          import urllib.parse
-          import urllib.request
-          from datetime import datetime, timedelta, timezone
+def load_config():
+    with CONFIG_PATH.open(encoding="utf-8") as file:
+        config = json.load(file)
 
-          key = os.environ["ODDSPAPI_API_KEY"]
-          now = datetime.now(timezone.utc)
-          end = now + timedelta(hours=12)
+    if config.get("sport") != "NHL":
+        raise ValueError("Only NHL monitoring is permitted")
 
-          def request(path, params):
-              query = urllib.parse.urlencode({
-                  **params,
-                  "apiKey": key
-              })
-              url = "https://api.oddspapi.io" + path + "?" + query
-              with urllib.request.urlopen(url, timeout=25) as response:
-                  return json.load(response)
+    if config.get("pregame_only") is not True:
+        raise ValueError("Live odds are not permitted")
 
-          fixtures = request("/v4/fixtures", {
-              "tournamentId": 234,
-              "from": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-              "to": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
-              "statusId": 0,
-              "hasOdds": "true",
-              "bookmakers": "pinnacle"
-          })
+    if set(config.get("player_props", [])) != {
+        "goals", "points"
+    }:
+        raise ValueError(
+            "Only goals and points player props are permitted"
+        )
 
-          print("Upcoming NHL fixtures:", len(fixtures))
+    if config.get("real_odds_enabled") is not False:
+        raise ValueError(
+            "Real odds polling is disabled until quota protection exists"
+        )
 
-          if not fixtures:
-              print("No NHL fixtures in the next 12 hours.")
-          else:
-              fixture = fixtures[0]
-              fixture_id = fixture["fixtureId"]
-              print("Fixture:", fixture.get("participant1Name"),
-                    "vs", fixture.get("participant2Name"))
-              print("Start:", fixture.get("startTime"))
+    return config
 
-              odds = request("/v4/odds", {
-                  "fixtureId": fixture_id,
-                  "bookmakers": "pinnacle",
-                  "oddsFormat": "decimal",
-                  "language": "en",
-                  "verbosity": 2
-              })
 
-              pinnacle = odds.get("bookmakerOdds", {}).get("pinnacle", {})
-              markets = pinnacle.get("markets", {})
+def implied_probability(decimal_odds):
+    """Return the raw implied probability, before removing vig."""
+    try:
+        odds = float(decimal_odds)
+    except (TypeError, ValueError):
+        return None
 
-              print("Market count:", len(markets))
+    if odds <= 1:
+        return None
 
-              for market_id, market in list(markets.items())[:40]:
-                  print("\nMARKET ID:", market_id)
-                  print("Data type:", type(market).__name__)
+    return 1.0 / odds
 
-                  if isinstance(market, dict):
-                      print("Fields:", list(market.keys()))
 
-                      for field in (
-                          "marketName", "name", "label",
-                          "marketType", "description",
-                          "outcomes", "selections", "bets"
-                      ):
-                          if field in market:
-                              value = market[field]
-                              if isinstance(value, (dict, list)):
-                                  print(field + ":", json.dumps(value)[:700])
-                              else:
-                                  print(field + ":", value)
-                  else:
-                      print("Value preview:", str(market)[:200])
+def parse_pinnacle_odds(response):
+    """Extract active Pinnacle outcomes from an OddsPapi response."""
+    bookmaker_odds = response.get("bookmakerOdds", {})
+    pinnacle = bookmaker_odds.get(BOOKMAKER, {})
+    markets = pinnacle.get("markets", {})
 
-              print("\nMarket detail inspection complete")
-          PY
+    if not isinstance(markets, dict):
+        return []
+
+    parsed = []
+
+    for market_id, market in markets.items():
+        if not isinstance(market, dict):
+            continue
+
+        if market.get("marketActive") is False:
+            continue
+
+        outcomes = market.get("outcomes", {})
+
+        if not isinstance(outcomes, dict):
+            continue
+
+        for outcome_id, outcome in outcomes.items():
+            if not isinstance(outcome, dict):
+                continue
+
+            players = outcome.get("players", {})
+
+            if not isinstance(players, dict):
+                continue
+
+            for player_id, selection in players.items():
+                if not isinstance(selection, dict):
+                    continue
+
+                if selection.get("active") is not True:
+                    continue
+
+                price = selection.get("price")
+                probability = implied_probability(price)
+
+                if probability is None:
+                    continue
+
+                parsed.append({
+                    "market_id": str(market_id),
+                    "outcome_id": str(outcome_id),
+                    "player_id": str(player_id),
+                    "outcome": selection.get(
+                        "bookmakerOutcomeId"
+                    ),
+                    "player_name": selection.get(
+                        "playerName"
+                    ),
+                    "decimal_odds": float(price),
+                    "raw_implied_probability": probability,
+                    "main_line": selection.get(
+                        "mainLine"
+                    ),
+                    "last_changed": selection.get(
+                        "changedAt"
+                    ),
+                })
+
+    return parsed
+
+
+def main():
+    config = load_config()
+
+    print(
+        datetime.now(timezone.utc).isoformat(),
+        "NHL pregame monitor"
+    )
+
+    print("Sport ID:", NHL_SPORT_ID)
+    print("NHL tournament ID:", NHL_TOURNAMENT_ID)
+    print("Bookmaker:", BOOKMAKER)
+    print("Lookahead hours:", config["lookahead_hours"])
+    print("Minimum edge:", config["min_edge_percentage_points"])
+    print("Allowed player props:", config["player_props"])
+
+    print("SAFE MODE ACTIVE")
+    print("Pinnacle odds parser loaded successfully")
+    print("No API requests made")
+    print("No Polymarket comparisons performed")
+    print("No alerts sent")
+    print("No bets placed")
+
+
+if __name__ == "__main__":
+    main()
