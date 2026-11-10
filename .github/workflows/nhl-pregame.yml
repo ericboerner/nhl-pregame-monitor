@@ -13,7 +13,6 @@ jobs:
   monitor:
     runs-on: ubuntu-latest
     timeout-minutes: 3
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -21,7 +20,7 @@ jobs:
       - name: Run NHL monitor
         run: python3 monitor.py
 
-      - name: Inspect Pinnacle NHL markets
+      - name: Inspect NHL market details
         if: github.event_name == 'workflow_dispatch'
         env:
           ODDSPAPI_API_KEY: ${{ secrets.ODDSPAPI_API_KEY }}
@@ -58,12 +57,12 @@ jobs:
           print("Upcoming NHL fixtures:", len(fixtures))
 
           if not fixtures:
-              print("No NHL fixtures available for this test.")
+              print("No NHL fixtures in the next 12 hours.")
           else:
               fixture = fixtures[0]
               fixture_id = fixture["fixtureId"]
-
-              print("Fixture ID:", fixture_id)
+              print("Fixture:", fixture.get("participant1Name"),
+                    "vs", fixture.get("participant2Name"))
               print("Start:", fixture.get("startTime"))
 
               odds = request("/v4/odds", {
@@ -74,42 +73,31 @@ jobs:
                   "verbosity": 2
               })
 
-              pinnacle = odds.get("bookmakerOdds", {}).get("pinnacle")
+              pinnacle = odds.get("bookmakerOdds", {}).get("pinnacle", {})
+              markets = pinnacle.get("markets", {})
 
-              if pinnacle is None:
-                  print("No Pinnacle odds returned.")
-              else:
-                  print("Pinnacle data type:", type(pinnacle).__name__)
+              print("Market count:", len(markets))
 
-                  if isinstance(pinnacle, dict):
-                      print("Pinnacle top-level keys:", list(pinnacle.keys()))
+              for market_id, market in list(markets.items())[:40]:
+                  print("\nMARKET ID:", market_id)
+                  print("Data type:", type(market).__name__)
 
-                      for section, value in pinnacle.items():
-                          print("Section:", section)
-                          print("Data type:", type(value).__name__)
+                  if isinstance(market, dict):
+                      print("Fields:", list(market.keys()))
 
-                          if isinstance(value, dict):
-                              print("Keys:", list(value.keys())[:30])
-                          elif isinstance(value, list):
-                              print("Number of items:", len(value))
+                      for field in (
+                          "marketName", "name", "label",
+                          "marketType", "description",
+                          "outcomes", "selections", "bets"
+                      ):
+                          if field in market:
+                              value = market[field]
+                              if isinstance(value, (dict, list)):
+                                  print(field + ":", json.dumps(value)[:700])
+                              else:
+                                  print(field + ":", value)
+                  else:
+                      print("Value preview:", str(market)[:200])
 
-                              for item in value[:3]:
-                                  if isinstance(item, dict):
-                                      print("Item keys:", list(item.keys()))
-                                      for field in (
-                                          "marketName", "marketId",
-                                          "name", "label", "type"
-                                      ):
-                                          if field in item:
-                                              print(field + ":", item[field])
-                                  else:
-                                      print("Item type:", type(item).__name__)
-
-                  elif isinstance(pinnacle, list):
-                      print("Number of Pinnacle entries:", len(pinnacle))
-                      for item in pinnacle[:5]:
-                          if isinstance(item, dict):
-                              print("Entry keys:", list(item.keys()))
-
-                  print("Market inspection complete")
+              print("\nMarket detail inspection complete")
           PY
