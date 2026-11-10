@@ -32,22 +32,19 @@ jobs:
           import urllib.parse
           import urllib.request
 
-          key = os.environ["ODDSPAPI_API_KEY"]
-
           params = urllib.parse.urlencode({
-              "apiKey": key
+              "apiKey": os.environ["ODDSPAPI_API_KEY"]
           })
 
           url = "https://api.oddspapi.io/v4/account?" + params
 
           with urllib.request.urlopen(url, timeout=20) as response:
-              data = json.load(response)
+              json.load(response)
 
           print("OddsPapi account connection successful")
-          print("Account response received")
           PY
 
-      - name: Find Ice Hockey sport ID
+      - name: Find NHL fixtures
         if: github.event_name == 'workflow_dispatch'
         env:
           ODDSPAPI_API_KEY: ${{ secrets.ODDSPAPI_API_KEY }}
@@ -57,27 +54,42 @@ jobs:
           import os
           import urllib.parse
           import urllib.request
+          from datetime import datetime, timedelta, timezone
+
+          now = datetime.now(timezone.utc)
+          end = now + timedelta(hours=12)
 
           params = urllib.parse.urlencode({
               "apiKey": os.environ["ODDSPAPI_API_KEY"],
-              "language": "en"
+              "sportId": 15,
+              "from": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "to": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "statusId": 0,
+              "hasOdds": "true",
+              "bookmakers": "pinnacle"
           })
 
-          url = "https://api.oddspapi.io/v4/sports?" + params
+          url = "https://api.oddspapi.io/v4/fixtures?" + params
 
           with urllib.request.urlopen(url, timeout=20) as response:
-              sports = json.load(response)
+              fixtures = json.load(response)
 
-          found = False
+          print("Ice hockey fixtures found:", len(fixtures))
 
-          for sport in sports:
-              name = sport.get("sportName", "")
-              if "hockey" in name.lower():
-                  print("Sport:", name)
-                  print("Sport ID:", sport.get("sportId"))
-                  print("Slug:", sport.get("slug"))
-                  found = True
+          tournament_ids = set()
 
-          if not found:
-              print("No hockey sport found in API response")
+          for fixture in fixtures[:30]:
+              tournament_id = fixture.get("tournamentId")
+              tournament_ids.add(tournament_id)
+
+              print(
+                  "Tournament ID:", tournament_id,
+                  "| Fixture ID:", fixture.get("fixtureId"),
+                  "| Start:", fixture.get("startTime")
+              )
+
+          print("Tournament IDs:", sorted(
+              str(x) for x in tournament_ids if x is not None
+          ))
+          print("NHL tournament identification still required.")
           PY
