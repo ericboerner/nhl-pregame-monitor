@@ -21,7 +21,7 @@ jobs:
       - name: Run NHL monitor
         run: python3 monitor.py
 
-      - name: Test Pinnacle NHL odds
+      - name: Inspect Pinnacle NHL markets
         if: github.event_name == 'workflow_dispatch'
         env:
           ODDSPAPI_API_KEY: ${{ secrets.ODDSPAPI_API_KEY }}
@@ -38,8 +38,10 @@ jobs:
           end = now + timedelta(hours=12)
 
           def request(path, params):
-              params["apiKey"] = key
-              query = urllib.parse.urlencode(params)
+              query = urllib.parse.urlencode({
+                  **params,
+                  "apiKey": key
+              })
               url = "https://api.oddspapi.io" + path + "?" + query
               with urllib.request.urlopen(url, timeout=25) as response:
                   return json.load(response)
@@ -53,15 +55,15 @@ jobs:
               "bookmakers": "pinnacle"
           })
 
-          print("NHL fixtures found:", len(fixtures))
+          print("Upcoming NHL fixtures:", len(fixtures))
 
           if not fixtures:
-              print("No qualifying NHL fixtures in next 12 hours.")
+              print("No NHL fixtures available for this test.")
           else:
               fixture = fixtures[0]
               fixture_id = fixture["fixtureId"]
 
-              print("Testing fixture:", fixture_id)
+              print("Fixture ID:", fixture_id)
               print("Start:", fixture.get("startTime"))
 
               odds = request("/v4/odds", {
@@ -72,20 +74,42 @@ jobs:
                   "verbosity": 2
               })
 
-              print("Odds response received")
-              print("Top-level fields:", list(odds.keys()))
+              pinnacle = odds.get("bookmakerOdds", {}).get("pinnacle")
 
-              for key_name, value in odds.items():
-                  if isinstance(value, dict):
-                      print(
-                          "Section:", key_name,
-                          "| Keys:", list(value.keys())[:20]
-                      )
-                  elif isinstance(value, list):
-                      print(
-                          "Section:", key_name,
-                          "| Items:", len(value)
-                      )
+              if pinnacle is None:
+                  print("No Pinnacle odds returned.")
+              else:
+                  print("Pinnacle data type:", type(pinnacle).__name__)
 
-              print("Market structure inspection complete")
+                  if isinstance(pinnacle, dict):
+                      print("Pinnacle top-level keys:", list(pinnacle.keys()))
+
+                      for section, value in pinnacle.items():
+                          print("Section:", section)
+                          print("Data type:", type(value).__name__)
+
+                          if isinstance(value, dict):
+                              print("Keys:", list(value.keys())[:30])
+                          elif isinstance(value, list):
+                              print("Number of items:", len(value))
+
+                              for item in value[:3]:
+                                  if isinstance(item, dict):
+                                      print("Item keys:", list(item.keys()))
+                                      for field in (
+                                          "marketName", "marketId",
+                                          "name", "label", "type"
+                                      ):
+                                          if field in item:
+                                              print(field + ":", item[field])
+                                  else:
+                                      print("Item type:", type(item).__name__)
+
+                  elif isinstance(pinnacle, list):
+                      print("Number of Pinnacle entries:", len(pinnacle))
+                      for item in pinnacle[:5]:
+                          if isinstance(item, dict):
+                              print("Entry keys:", list(item.keys()))
+
+                  print("Market inspection complete")
           PY
